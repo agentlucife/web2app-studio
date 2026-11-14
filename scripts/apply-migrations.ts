@@ -39,7 +39,9 @@ async function main() {
       create table if not exists public.schema_migrations (
         name text primary key,
         applied_at timestamptz not null default now()
-      )
+      );
+      alter table public.schema_migrations enable row level security;
+      revoke all on public.schema_migrations from anon, authenticated;
     `);
     const { rows } = await client.query<{ name: string }>(
       "select name from public.schema_migrations"

@@ -492,6 +492,7 @@ export async function syncBuild(buildId: string): Promise<SyncOutcome> {
 
     let uploaded = 0;
     let firstName: string | null = null;
+    try {
     for (const artifact of artifacts) {
       const { data: existing } = await admin
         .from("artifacts")
@@ -551,6 +552,21 @@ export async function syncBuild(buildId: string): Promise<SyncOutcome> {
       }
     }
 
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not download or store the build artifact";
+      await admin
+        .from("builds")
+        .update({
+          status: "failed",
+          error_message: message.slice(0, 2000),
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", build.id);
+      await appendBuildLog(build.id, "error", `Artifact verification failed: ${message}`);
+      return { build: { ...build, status: "failed" }, changed: true };
+    }
     if (uploaded === 0) {
       const message =
         "No new artifact could be stored. It may already have been imported by an earlier sync.";
