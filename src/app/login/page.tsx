@@ -39,7 +39,14 @@ export default function LoginPage() {
       // On success the browser is redirected to GitHub; keep the loading state
       // until that navigation happens.
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start GitHub sign-in.");
+      const message = err instanceof Error ? err.message : "Could not start GitHub sign-in.";
+      if (/provider is not enabled/i.test(message)) {
+        setError(
+          "GitHub sign-in is not enabled in Supabase Auth yet. Open Supabase → Authentication → Providers → GitHub, enable it, add your GitHub OAuth app credentials, then try again."
+        );
+      } else {
+        setError(message);
+      }
       setLoading(false);
     }
   }
