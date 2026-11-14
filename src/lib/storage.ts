@@ -10,11 +10,26 @@ const ensured: Record<string, boolean> = {};
 export async function ensureBucket(bucket: string) {
   if (ensured[bucket]) return;
   const admin = createAdminSupabase();
+  const fileSizeLimit = bucket === UPLOADS_BUCKET ? 50 * 1024 * 1024 : 512 * 1024 * 1024;
   const { error } = await admin.storage.createBucket(bucket, {
     public: false,
-    fileSizeLimit: 512 * 1024 * 1024,
+    fileSizeLimit,
   });
-  if (error && !/already exists|duplicate/i.test(error.message)) {
+  if (error && /already exists|duplicate/i.test(error.message)) {
+    // The bucket may have been created by an older migration with a smaller
+    // limit. Raise it so uploads are not rejected by Supabase Storage.
+    const { error: updateError } = await admin.storage.updateBucket(bucket, {
+      public: false,
+      fileSizeLimit,
+    });
+    if (updateError) {
+      throw new ApiError(
+        `Storage bucket "${bucket}" is unavailable: ${updateError.message}`,
+        503,
+        "storage_error"
+      );
+    }
+  } else if (error) {
     throw new ApiError(`Storage bucket "${bucket}" is unavailable: ${error.message}`, 503, "storage_error");
   }
   ensured[bucket] = true;

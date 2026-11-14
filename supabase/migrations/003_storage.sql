@@ -4,7 +4,7 @@
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values
-  ('uploads', 'uploads', false, 10485760, array['image/png','image/jpeg','image/webp']),
+  ('uploads', 'uploads', false, 52428800, array['image/png','image/jpeg','image/webp']),
   ('artifacts', 'artifacts', false, 536870912, null)
 on conflict (id) do update
   set public = false,
