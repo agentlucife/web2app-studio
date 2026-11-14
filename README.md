@@ -151,11 +151,13 @@ Generated repositories contain `.github/workflows/*.yml`, so the `workflow` scop
 1. Import the repository into Vercel.
 2. Add every required environment variable for Production (and Preview if needed).
 3. Set `NEXT_PUBLIC_APP_URL` to the final public URL. Callback and OAuth URLs depend on it.
-4. Deploy. `vercel.json` registers the cron job:
+4. Deploy. `vercel.json` registers a daily cron job (Vercel Hobby allows only daily cron jobs):
 
 ```json
-{ "path": "/api/cron/poll-builds", "schedule": "*/2 * * * *" }
+{ "path": "/api/cron/poll-builds", "schedule": "0 0 * * *" }
 ```
+
+If you upgrade to Vercel Pro, you can change this to `*/2 * * * *` for two-minute polling. Build status is also updated immediately by the GitHub webhook and whenever you open a build's detail page, so daily polling is only a fallback.
 
 5. Ensure `CRON_SECRET` is set. Vercel automatically sends it as a Bearer token; requests without it return `401`.
 6. Make sure the deployment is reachable from GitHub Actions. Build callbacks (`/api/webhooks/build`) are sent by the generated workflows.
