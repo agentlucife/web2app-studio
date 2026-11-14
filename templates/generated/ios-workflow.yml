@@ -1,0 +1,224 @@
+name: Web2App iOS Build
+
+run-name: "Web2App ${{ inputs.build_id }} (${{ inputs.build_type }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Web2App build ID
+        required: true
+        type: string
+      build_type:
+        description: Build type
+        required: true
+        type: choice
+        default: ios-archive
+        options:
+          - ios-archive
+          - ios-ipa
+      callback_url:
+        description: Web2App callback URL
+        required: false
+        type: string
+        default: ""
+      callback_token:
+        description: Build-scoped callback token
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web2app-ios-${{ inputs.build_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      CI: "true"
+      BUILD_ID: ${{ inputs.build_id }}
+      BUILD_TYPE: ${{ inputs.build_type }}
+      CALLBACK_URL: ${{ inputs.callback_url }}
+      CALLBACK_TOKEN: ${{ inputs.callback_token }}
+      GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Check out generated project
+        uses: actions/checkout@v4
+
+      - name: Notify start
+        run: node scripts/notify-build.mjs building "iOS workflow started"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Show toolchain
+        run: xcodebuild -version
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Add iOS platform
+        run: npx cap add ios
+
+      - name: Generate app icons and splash screens
+        run: npx @capacitor/assets generate --ios
+
+      - name: Apply native configuration
+        run: node scripts/apply-native-config.mjs ios
+
+      - name: Synchronise Capacitor
+        run: npx cap sync ios
+
+      - name: Install CocoaPods dependencies when present
+        run: |
+          if [ -f ios/App/Podfile ]; then
+            cd ios/App
+            pod install --repo-update
+          else
+            echo "Swift Package Manager project detected; skipping CocoaPods."
+          fi
+
+      - name: Import signing credentials
+        id: signing
+        env:
+          IOS_BUILD_CERTIFICATE_BASE64: ${{ secrets.IOS_BUILD_CERTIFICATE_BASE64 }}
+          IOS_BUILD_CERTIFICATE_PASSWORD: ${{ secrets.IOS_BUILD_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${IOS_BUILD_CERTIFICATE_BASE64:-}" ] || [ -z "${IOS_PROVISIONING_PROFILE_BASE64:-}" ] || [ -z "${IOS_TEAM_ID:-}" ]; then
+            echo "signed=false" >> "${GITHUB_OUTPUT}"
+            echo "No iOS signing credentials configured. The archive will be unsigned and cannot be installed on a device."
+            exit 0
+          fi
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+          echo "${IOS_BUILD_CERTIFICATE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/build.p12"
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" build.keychain
+          security import "${RUNNER_TEMP}/build.p12" -k build.keychain -P "${IOS_BUILD_CERTIFICATE_PASSWORD:-}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" build.keychain
+          mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
+          echo "${IOS_PROVISIONING_PROFILE_BASE64}" | base64 --decode > "${HOME}/Library/MobileDevice/Provisioning Profiles/web2app.mobileprovision"
+          PROFILE_NAME="$(security cms -D -i "${HOME}/Library/MobileDevice/Provisioning Profiles/web2app.mobileprovision" | plutil -extract Name raw -o - -)"
+          echo "profile_name=${PROFILE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "signed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate requested build type
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          if [ "${BUILD_TYPE}" = "ios-ipa" ] && [ "${SIGNED}" != "true" ]; then
+            echo "::error::A signed IPA requires IOS_BUILD_CERTIFICATE_BASE64, IOS_BUILD_CERTIFICATE_PASSWORD, IOS_PROVISIONING_PROFILE_BASE64 and IOS_TEAM_ID repository secrets. Use ios-archive for an unsigned archive."
+            exit 1
+          fi
+
+      - name: Build and archive
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          SIGNED: ${{ steps.signing.outputs.signed }}
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
+        run: |
+          set -euo pipefail
+          if [ -d ios/App/CapApp-SPM ]; then
+            PROJECT_ARGS=(-project ios/App/App.xcodeproj)
+          else
+            PROJECT_ARGS=(-workspace ios/App/App.xcworkspace)
+          fi
+          mkdir -p build
+          if [ "${SIGNED}" = "true" ]; then
+            xcodebuild "${PROJECT_ARGS[@]}" -scheme App -configuration Release \
+              -destination "generic/platform=iOS" \
+              -archivePath build/Web2App.xcarchive \
+              archive \
+              DEVELOPMENT_TEAM="${IOS_TEAM_ID}" \
+              CODE_SIGN_STYLE=Manual \
+              CODE_SIGN_IDENTITY="Apple Distribution" \
+              PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}"
+          else
+            xcodebuild "${PROJECT_ARGS[@]}" -scheme App -configuration Release \
+              -destination "generic/platform=iOS" \
+              -archivePath build/Web2App.xcarchive \
+              archive \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY=""
+          fi
+          if [ ! -d build/Web2App.xcarchive ]; then
+            echo "::error::Xcode did not produce an archive."
+            exit 1
+          fi
+
+      - name: Export IPA when signed
+        if: inputs.build_type == 'ios-ipa'
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_EXPORT_METHOD: ${{ secrets.IOS_EXPORT_METHOD }}
+        run: |
+          set -euo pipefail
+          METHOD="${IOS_EXPORT_METHOD:-app-store}"
+          cat > build/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>${METHOD}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>teamID</key><string>${IOS_TEAM_ID}</string>
+            <key>stripSwiftSymbols</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/Web2App.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist build/ExportOptions.plist
+          IPA_PATH="$(find build/export -name '*.ipa' -type f | head -n 1)"
+          if [ -z "${IPA_PATH}" ]; then
+            echo "::error::Xcode export did not produce an IPA."
+            exit 1
+          fi
+          echo "ARTIFACT_PATH=${IPA_PATH}" >> "${GITHUB_ENV}"
+
+      - name: Package archive
+        if: inputs.build_type == 'ios-archive'
+        run: |
+          set -euo pipefail
+          cd build
+          zip -qry Web2App-unsigned.xcarchive.zip Web2App.xcarchive
+          echo "ARTIFACT_PATH=build/Web2App-unsigned.xcarchive.zip" >> "${GITHUB_ENV}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web2app-${{ inputs.build_id }}-ios
+          path: ${{ env.ARTIFACT_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Notify result
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set +e
+          if [ "${JOB_STATUS}" = "success" ]; then
+            node scripts/notify-build.mjs uploading "iOS artifact uploaded; the platform is verifying it."
+          elif [ "${JOB_STATUS}" = "cancelled" ]; then
+            node scripts/notify-build.mjs cancelled "The iOS workflow was cancelled."
+          else
+            node scripts/notify-build.mjs failed "The iOS workflow failed. Open the workflow run logs for details."
+          fi

@@ -1,0 +1,163 @@
+name: Web2App Android Build
+
+run-name: "Web2App ${{ inputs.build_id }} (${{ inputs.build_type }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: Web2App build ID
+        required: true
+        type: string
+      build_type:
+        description: Build type
+        required: true
+        type: choice
+        default: debug
+        options:
+          - debug
+          - release-apk
+          - release-aab
+      callback_url:
+        description: Web2App callback URL
+        required: false
+        type: string
+        default: ""
+      callback_token:
+        description: Build-scoped callback token
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web2app-android-${{ inputs.build_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      BUILD_ID: ${{ inputs.build_id }}
+      BUILD_TYPE: ${{ inputs.build_type }}
+      CALLBACK_URL: ${{ inputs.callback_url }}
+      CALLBACK_TOKEN: ${{ inputs.callback_token }}
+      GITHUB_RUN_ID: ${{ github.run_id }}
+    steps:
+      - name: Check out generated project
+        uses: actions/checkout@v4
+
+      - name: Notify start
+        run: node scripts/notify-build.mjs building "Android workflow started"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Generate launcher icons and splash screens
+        run: npx @capacitor/assets generate --android
+
+      - name: Apply native configuration
+        run: node scripts/apply-native-config.mjs android
+
+      - name: Synchronise Capacitor
+        run: npx cap sync android
+
+      - name: Configure release signing
+        if: inputs.build_type != 'debug'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] || [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ] || [ -z "${ANDROID_KEY_PASSWORD:-}" ]; then
+            echo "::error::Release builds need ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD repository secrets. See the generated README."
+            exit 1
+          fi
+          echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/release.keystore"
+          echo "KEYSTORE_PATH=${RUNNER_TEMP}/release.keystore" >> "${GITHUB_ENV}"
+
+      - name: Build Android artifact
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cd android
+          chmod +x gradlew
+          COMMON=(--no-daemon --stacktrace)
+          SIGNING=(
+            "-Pandroid.injected.signing.store.file=${KEYSTORE_PATH}"
+            "-Pandroid.injected.signing.store.password=${ANDROID_KEYSTORE_PASSWORD}"
+            "-Pandroid.injected.signing.key.alias=${ANDROID_KEY_ALIAS}"
+            "-Pandroid.injected.signing.key.password=${ANDROID_KEY_PASSWORD}"
+          )
+          case "${BUILD_TYPE}" in
+            debug)
+              ./gradlew assembleDebug "${COMMON[@]}"
+              OUTPUT="app/build/outputs/apk/debug/app-debug.apk"
+              ;;
+            release-apk)
+              ./gradlew assembleRelease "${COMMON[@]}" "${SIGNING[@]}"
+              OUTPUT="app/build/outputs/apk/release/app-release.apk"
+              ;;
+            release-aab)
+              ./gradlew bundleRelease "${COMMON[@]}" "${SIGNING[@]}"
+              OUTPUT="app/build/outputs/bundle/release/app-release.aab"
+              ;;
+            *)
+              echo "::error::Unsupported build type ${BUILD_TYPE}"
+              exit 1
+              ;;
+          esac
+          if [ ! -f "${OUTPUT}" ]; then
+            echo "::error::Expected artifact ${OUTPUT} was not produced by Gradle."
+            find app/build/outputs -maxdepth 5 -type f || true
+            exit 1
+          fi
+          echo "ARTIFACT_PATH=android/${OUTPUT}" >> "${GITHUB_ENV}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web2app-${{ inputs.build_id }}-android
+          path: ${{ env.ARTIFACT_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Notify result
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set +e
+          if [ "${JOB_STATUS}" = "success" ]; then
+            node scripts/notify-build.mjs uploading "Android artifact uploaded; the platform is verifying it."
+          elif [ "${JOB_STATUS}" = "cancelled" ]; then
+            node scripts/notify-build.mjs cancelled "The Android workflow was cancelled."
+          else
+            node scripts/notify-build.mjs failed "The Android workflow failed. Open the workflow run logs for details."
+          fi
