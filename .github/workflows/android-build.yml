@@ -1,0 +1,29 @@
+name: Android Build
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        required: true
+      repo:
+        required: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Build APK
+        run: |
+          echo "Building Android app for ${{ inputs.project_id }}"
+          # Add Gradle build steps here based on generated project
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: "**/*.apk"
