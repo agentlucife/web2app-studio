@@ -128,10 +128,10 @@ jobs:
           chmod +x gradlew
           COMMON=(--no-daemon --stacktrace)
           SIGNING=(
-            "-Pandroid.injected.signing.store.file=${KEYSTORE_PATH}"
-            "-Pandroid.injected.signing.store.password=${ANDROID_KEYSTORE_PASSWORD}"
-            "-Pandroid.injected.signing.key.alias=${ANDROID_KEY_ALIAS}"
-            "-Pandroid.injected.signing.key.password=${ANDROID_KEY_PASSWORD}"
+            "-Pandroid.injected.signing.store.file=${KEYSTORE_PATH:-}"
+            "-Pandroid.injected.signing.store.password=${ANDROID_KEYSTORE_PASSWORD:-}"
+            "-Pandroid.injected.signing.key.alias=${ANDROID_KEY_ALIAS:-}"
+            "-Pandroid.injected.signing.key.password=${ANDROID_KEY_PASSWORD:-}"
           )
           case "${BUILD_TYPE}" in
             debug)
