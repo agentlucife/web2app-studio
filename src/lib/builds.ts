@@ -545,6 +545,11 @@ export async function syncBuild(buildId: string): Promise<SyncOutcome> {
 
       for (const entry of entries) {
         const content = await entry.async("nodebuffer");
+        await appendBuildLog(
+          build.id,
+          "info",
+          `Storing ${entry.name} (${(content.length / 1024 / 1024).toFixed(2)} MB)`
+        );
         const ext = entry.name.split(".").pop()?.toLowerCase() ?? "zip";
         const kind = (
           ext === "apk" || ext === "aab" || ext === "ipa" || ext === "xcarchive" ? ext : "source"

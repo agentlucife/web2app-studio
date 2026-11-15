@@ -145,7 +145,7 @@ export default function ProjectsPage() {
       </div>
 
       {!projects ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, index) => (
             <Skeleton key={index} className="h-48" />
           ))}
@@ -166,7 +166,7 @@ export default function ProjectsPage() {
       ) : filtered.length === 0 ? (
         <EmptyState icon={Search} title="No matching projects" description="Try a different name, package ID or repository." />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {filtered.map((project) => (
             <Card key={project.id} className="group relative flex flex-col p-5 transition-colors hover:border-zinc-700">
               <div className="flex items-start justify-between gap-3">
