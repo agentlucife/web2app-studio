@@ -503,6 +503,12 @@ export async function syncBuild(buildId: string): Promise<SyncOutcome> {
       if (existing) continue;
       const zipBuffer = await downloadArtifactZip(token, project.repo_full_name, artifact.id);
       const zip = await JSZip.loadAsync(zipBuffer);
+      const allEntries = Object.keys(zip.files);
+      await appendBuildLog(
+        build.id,
+        "info",
+        `Artifact zip contains ${allEntries.length} entries: ${allEntries.slice(0, 10).join(", ")}${allEntries.length > 10 ? "..." : ""}`
+      );
       const candidates = Object.values(zip.files).filter(
         (entry) =>
           !entry.dir &&
@@ -517,13 +523,19 @@ export async function syncBuild(buildId: string): Promise<SyncOutcome> {
 
       if (entries.length === 0) {
         const isIos = build.platform === "ios";
+        if (!isIos) {
+          throw new Error(
+            `The workflow artifact "${artifact.name}" does not contain an APK/AAB/IPA file. ` +
+              `Entries found: ${allEntries.slice(0, 5).join(", ")}`
+          );
+        }
         await storeArtifact({
           build,
           userId: build.user_id,
           projectId: project.id,
           name: `${artifact.name}.zip`,
           content: zipBuffer,
-          kind: isIos ? "xcarchive" : "source",
+          kind: "xcarchive",
           contentType: "application/zip",
         });
         uploaded += 1;
