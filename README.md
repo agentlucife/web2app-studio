@@ -1,5 +1,7 @@
 # Web2App Studio
 
+![Web2App Studio](./public/web2app-studio.jpg)
+
 Turn a website into a real native Android/iOS app. The platform generates a genuine **Capacitor** project, pushes it to the customer's GitHub repository and compiles it with **GitHub Actions**. Artifacts are downloaded, verified and stored in private object storage; customers get short-lived download links.
 
 This repository contains the complete Next.js application, database migrations and the generator templates used for every build. It does not contain prebuilt APK/IPA files and it does not fake build progress.

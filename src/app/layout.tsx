@@ -4,6 +4,15 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Web2App Studio",
   description: "Convert websites into native Android and iOS apps.",
+  icons: {
+    icon: "/icon.png",
+    apple: "/apple-touch-icon.png",
+  },
+  openGraph: {
+    title: "Web2App Studio",
+    description: "Convert websites into native Android and iOS apps.",
+    images: ["/web2app-studio.jpg"],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
